@@ -9,12 +9,10 @@ save
 *.gmo
 *.qm
 core
-!core/
 core.*
 *.bak
 *~
 *build*
-!buildtests.in
 *.moc.*
 *.moc
 ui_*

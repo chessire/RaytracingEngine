@@ -4,17 +4,12 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
-#include <Eigen/Core>
 
-#include "GlobalConst.h"
-#include "DeepRT.h"
-
-// test
-
-using namespace Eigen;
+#include "Math/Math.h"
+#include "RaytracingEngine.h"
 
 struct Light {
-    Light(const Vector3f &p, const float i) : position(p), intensity(i) {}
+    Light(const Vector3f& p, const float i) : position(p), intensity(i) {}
     Vector3f position;
     float intensity;
 };
@@ -28,119 +23,45 @@ struct Material {
     float specular_exponent;
 };
 
-class SdfModel
+class Model
 {
 	Material material;
 public:
-	SdfModel(const Material& m) : material(m) { }
-	virtual ~SdfModel() {}
+	Model(const Material& m) : material(m) { }
+	virtual ~Model() {}
 
-	virtual float sdf(const Vector3f& point) const = 0;
-	virtual bool try_get_normal(const Vector3f& point, Vector3f& n) const = 0;
-	const Material& get_material() const { return material; }
+	virtual bool RayIntersect(const Vector3f& orig, const Vector3f& dir, float& t0) const = 0;
+	virtual Vector3f GetNormal(Vector3f point) const = 0;
+	const Material& GetMaterial() const { return material; }
 };
 
-struct Sphere : public SdfModel {
+struct Sphere : public Model {
 	Vector3f center;
 	float radius;
 
-	Sphere(const Vector3f &c, const float r, const Material &m) : SdfModel(m), center(c), radius(r) {}
+	Sphere(const Vector3f &c, const float r, const Material &m) : Model(m), center(c), radius(r) {}
 
-	float sdf(const Vector3f& point) const final
+	bool RayIntersect(const Vector3f& orig, const Vector3f& dir, float& t0) const final
 	{
-		return (point - center).norm() - radius;
+		Vector3f L = center - orig;
+		float tca = L.dot(dir);
+		float d2 = L.dot(L) - tca * tca;
+		if (d2 > radius * radius) return false;
+		float thc = sqrtf(radius * radius - d2);
+		t0 = tca - thc;
+		float t1 = tca + thc;
+		if (t0 < 0) t0 = t1;
+		if (t0 < 0) return false;
+		return true;
 	}
 
-	bool try_get_normal(const Vector3f& point, Vector3f& n) const final
+	Vector3f GetNormal(Vector3f point) const final
 	{
-		n = (point - center).normalized();
-
-		return true;
+		return (point - center).normalized();
 	}
 };
 
-Vector4f sin_vec(Vector4f v)
-{
-	return Vector4f(sinf(v[0]), sinf(v[1]), sinf(v[2]), sinf(v[3]));
-}
-
-struct StanfordBunny : public SdfModel {
-	Vector3f center;
-
-	StanfordBunny(const Vector3f &c, const Material &m) : SdfModel(m), center(c) {}
-
-	float sdf(const Vector3f& point) const final
-	{
-		Vector3f p = point - center;
-
-		//sdf is undefined outside the unit sphere, uncomment to witness the abominations
-		float p_norm = p.norm();
-		if (p_norm > 1.) {
-			return p_norm - 0.8f;
-		}
-
-		//neural networks can be really compact... when they want to be
-		Vector4f f00 = sin_vec(p[1] * Vector4f(-3.02, 1.95, -3.42, -.60) + p[2] * Vector4f(3.08, .85, -2.25, -.24) - p[0] * Vector4f(-.29, 1.16, -3.74, 2.89) + Vector4f(-.71, 4.50, -3.24, -3.50));
-		Vector4f f01 = sin_vec(p[1] * Vector4f(-.40, -3.61, 3.23, -.14) + p[2] * Vector4f(-.36, 3.64, -3.91, 2.66) - p[0] * Vector4f(2.90, -.54, -2.75, 2.71) + Vector4f(7.02, -5.41, -1.12, -7.41));
-		Vector4f f02 = sin_vec(p[1] * Vector4f(-1.77, -1.28, -4.29, -3.20) + p[2] * Vector4f(-3.49, -2.81, -.64, 2.79) - p[0] * Vector4f(3.15, 2.14, -3.85, 1.83) + Vector4f(-2.07, 4.49, 5.33, -2.17));
-		Vector4f f03 = sin_vec(p[1] * Vector4f(-.49, .68, 3.05, .42) + p[2] * Vector4f(-2.87, .78, 3.78, -3.41) - p[0] * Vector4f(-2.65, .33, .07, -.64) + Vector4f(-3.24, -5.90, 1.14, -4.71));
-		Vector4f f10 = sin_vec((Matrix4f()<<-.34, .06, -.59, -.76, .10, -.19, -.12, .44, .64, -.02, -.26, .15, -.16, .21, .91, .15).finished().transpose()*f00 +
-			(Matrix4f()<<.01, .54, -.77, .11, .06, -.14, .43, .51, -.18, .08, .39, .20, .33, -.49, -.10, .19).finished().transpose()*f01 +
-			(Matrix4f()<<.27, .22, .43, .53, .18, -.17, .23, -.64, -.14, .02, -.10, .16, -.13, -.06, -.04, -.36).finished().transpose()*f02 +
-			(Matrix4f()<<-.13, .29, -.29, .08, 1.13, .02, -.83, .32, -.32, .04, -.31, -.16, .14, -.03, -.20, .39).finished().transpose()*f03 +
-			Vector4f(.73, -4.28, -1.56, -1.80)) / 1.0 + f00;
-		Vector4f f11 = sin_vec((Matrix4f()<<-1.11, .55, -.12, -1.00, .16, .15, -.30, .31, -.01, .01, .31, -.42, -.29, .38, -.04, .71).finished().transpose()*f00 +
-			(Matrix4f()<<.96, -.02, .86, .52, -.14, .60, .44, .43, .02, -.15, -.49, -.05, -.06, -.25, -.03, -.22).finished().transpose()*f01 +
-			(Matrix4f()<<.52, .44, -.05, -.11, -.56, -.10, -.61, -.40, -.04, .55, .32, -.07, -.02, .28, .26, -.49).finished().transpose()*f02 +
-			(Matrix4f()<<.02, -.32, .06, -.17, -.59, .00, -.24, .60, -.06, .13, -.21, -.27, -.12, -.14, .58, -.55).finished().transpose()*f03 +
-			Vector4f(-2.24, -3.48, -.80, 1.41)) / 1.0 + f01;
-		Vector4f f12 = sin_vec((Matrix4f()<<.44, -.06, -.79, -.46, .05, -.60, .30, .36, .35, .12, .02, .12, .40, -.26, .63, -.21).finished().transpose()*f00 +
-			(Matrix4f()<<-.48, .43, -.73, -.40, .11, -.01, .71, .05, -.25, .25, -.28, -.20, .32, -.02, -.84, .16).finished().transpose()*f01 +
-			(Matrix4f()<<.39, -.07, .90, .36, -.38, -.27, -1.86, -.39, .48, -.20, -.05, .10, -.00, -.21, .29, .63).finished().transpose()*f02 +
-			(Matrix4f()<<.46, -.32, .06, .09, .72, -.47, .81, .78, .90, .02, -.21, .08, -.16, .22, .32, -.13).finished().transpose()*f03 +
-			Vector4f(3.38, 1.20, .84, 1.41)) / 1.0 + f02;
-		Vector4f f13 = sin_vec((Matrix4f()<<-.41, -.24, -.71, -.25, -.24, -.75, -.09, .02, -.27, -.42, .02, .03, -.01, .51, -.12, -1.24).finished().transpose()*f00 +
-			(Matrix4f()<<.64, .31, -1.36, .61, -.34, .11, .14, .79, .22, -.16, -.29, -.70, .02, -.37, .49, .39).finished().transpose()*f01 +
-			(Matrix4f()<<.79, .47, .54, -.47, -1.13, -.35, -1.03, -.22, -.67, -.26, .10, .21, -.07, -.73, -.11, .72).finished().transpose()*f02 +
-			(Matrix4f()<<.43, -.23, .13, .09, 1.38, -.63, 1.57, -.20, .39, -.14, .42, .13, -.57, -.08, -.21, .21).finished().transpose()*f03 +
-			Vector4f(-.34, -3.28, .43, -.52)) / 1.0 + f03;
-		f00 = sin_vec((Matrix4f()<<-.72, .23, -.89, .52, .38, .19, -.16, -.88, .26, -.37, .09, .63, .29, -.72, .30, -.95).finished().transpose()*f10 +
-			(Matrix4f()<<-.22, -.51, -.42, -.73, -.32, .00, -1.03, 1.17, -.20, -.03, -.13, -.16, -.41, .09, .36, -.84).finished().transpose()*f11 +
-			(Matrix4f()<<-.21, .01, .33, .47, .05, .20, -.44, -1.04, .13, .12, -.13, .31, .01, -.34, .41, -.34).finished().transpose()*f12 +
-			(Matrix4f()<<-.13, -.06, -.39, -.22, .48, .25, .24, -.97, -.34, .14, .42, -.00, -.44, .05, .09, -.95).finished().transpose()*f13 +
-			Vector4f(.48, .87, -.87, -2.06)) / 1.4 + f10;
-		f01 = sin_vec((Matrix4f()<<-.27, .29, -.21, .15, .34, -.23, .85, -.09, -1.15, -.24, -.05, -.25, -.12, -.73, -.17, -.37).finished().transpose()*f10 +
-			(Matrix4f()<<-1.11, .35, -.93, -.06, -.79, -.03, -.46, -.37, .60, -.37, -.14, .45, -.03, -.21, .02, .59).finished().transpose()*f11 +
-			(Matrix4f()<<-.92, -.17, -.58, -.18, .58, .60, .83, -1.04, -.80, -.16, .23, -.11, .08, .16, .76, .61).finished().transpose()*f12 +
-			(Matrix4f()<<.29, .45, .30, .39, -.91, .66, -.35, -.35, .21, .16, -.54, -.63, 1.10, -.38, .20, .15).finished().transpose()*f13 +
-			Vector4f(-1.72, -.14, 1.92, 2.08)) / 1.4 + f11;
-		f02 = sin_vec((Matrix4f()<<1.00, .66, 1.30, -.51, .88, .25, -.67, .03, -.68, -.08, -.12, -.14, .46, 1.15, .38, -.10).finished().transpose()*f10 +
-			(Matrix4f()<<.51, -.57, .41, -.09, .68, -.50, -.04, -1.01, .20, .44, -.60, .46, -.09, -.37, -1.30, .04).finished().transpose()*f11 +
-			(Matrix4f()<<.14, .29, -.45, -.06, -.65, .33, -.37, -.95, .71, -.07, 1.00, -.60, -1.68, -.20, -.00, -.70).finished().transpose()*f12 +
-			(Matrix4f()<<-.31, .69, .56, .13, .95, .36, .56, .59, -.63, .52, -.30, .17, 1.23, .72, .95, .75).finished().transpose()*f13 +
-			Vector4f(-.90, -3.26, -.44, -3.11)) / 1.4 + f12;
-		f03 = sin_vec((Matrix4f()<<.51, -.98, -.28, .16, -.22, -.17, -1.03, .22, .70, -.15, .12, .43, .78, .67, -.85, -.25).finished().transpose()*f10 +
-			(Matrix4f()<<.81, .60, -.89, .61, -1.03, -.33, .60, -.11, -.06, .01, -.02, -.44, .73, .69, 1.02, .62).finished().transpose()*f11 +
-			(Matrix4f()<<-.10, .52, .80, -.65, .40, -.75, .47, 1.56, .03, .05, .08, .31, -.03, .22, -1.63, .07).finished().transpose()*f12 +
-			(Matrix4f()<<-.18, -.07, -1.22, .48, -.01, .56, .07, .15, .24, .25, -.09, -.54, .23, -.08, .20, .36).finished().transpose()*f13 +
-			Vector4f(-1.11, -4.28, 1.02, -.23)) / 1.4 + f13;
-
-		return f00.dot(Vector4f(.09, .12, -.07, -.03)) + f01.dot(Vector4f(-.04, .07, -.08, .05)) +
-			f02.dot(Vector4f(-.01, .06, -.02, .07)) + f03.dot(Vector4f(-.05, .07, .03, .04));
-	}
-
-	bool try_get_normal(const Vector3f& point, Vector3f& n) const final
-	{
-		Vector3f other = point - Vector3f(0.001f, 0.f, 0.f);
-
-		float sdf_point = sdf(point);
-		float sdf_other = sdf(other);
-		n = Vector3f(sdf_point - sdf_other, sdf_point - sdf_other, sdf_point - sdf_other).normalized();
-		return true;
-	}
-};
-
-void fresnel(const Vector3f &I, const Vector3f &N, const float &ior, float &kr)
+void Fresnel(const Vector3f &I, const Vector3f &N, const float &ior, float &kr)
 {
 	float cosi = std::clamp(I.dot(N), -1.f, 1.f);
 	float etai = 1, etat = ior;
@@ -162,100 +83,67 @@ void fresnel(const Vector3f &I, const Vector3f &N, const float &ior, float &kr)
 	// kt = 1 - kr;
 }
 
-Vector3f reflect(const Vector3f &I, const Vector3f &N) {
+Vector3f Reflect(const Vector3f &I, const Vector3f &N) {
 	return I - N * 2.f*(I.dot(N));
 }
 
-Vector3f refract(const Vector3f &I, const Vector3f &N, const float eta_t, const float eta_i=1.f) { // Snell's law
+Vector3f Refract(const Vector3f &I, const Vector3f &N, const float eta_t, const float eta_i=1.f) { // Snell's law
     float cosi = - std::max(-1.f, std::min(1.f, I.dot(N)));
-    if (cosi<0) return refract(I, -N, eta_i, eta_t); // if the ray comes from the inside the object, swap the air and the media
+    if (cosi<0) return Refract(I, -N, eta_i, eta_t); // if the ray comes from the inside the object, swap the air and the media
     float eta = eta_i / eta_t;
     float k = 1 - eta*eta*(1 - cosi*cosi);
     return k<0 ? Vector3f(1,0,0) : I*eta + N*(eta*cosi - sqrtf(k)); // k<0 = total reflection, no ray to refract. I refract it anyways, this has no physical meaning
 }
 
-float scene_sdf(const Vector3f& point, const std::vector<const SdfModel*> &models, const SdfModel*& hit_model)
+float SceneIntersect(const Vector3f& orig, const Vector3f& dir, const std::vector<const Model*>& models, Vector3f& hit, Vector3f& N, Material& material)
 {
-	float min_dist = MAX_DISTANCE;
-	hit_model = nullptr;
-	for (const auto& model : models)
-	{
-		float dist = model->sdf(point);
-		if (dist < EPSILON)
-			continue;
-
-		if (min_dist > dist)
-		{
-			min_dist = dist;
-			hit_model = model;
+	float spheres_dist = std::numeric_limits<float>::max();
+	for (size_t i = 0; i < models.size(); i++) {
+		float dist_i;
+		if (models[i]->RayIntersect(orig, dir, dist_i) && dist_i < spheres_dist) {
+			spheres_dist = dist_i;
+			hit = orig + dir * dist_i;
+			N = models[i]->GetNormal(hit);
+			material = models[i]->GetMaterial();
 		}
-	}
-	return min_dist;
-}
-
-bool ray_marching(const Vector3f &orig, const Vector3f &dir, const std::vector<const SdfModel*> &models, Vector3f &hit, Vector3f &N, Material &material)
-{
-	float depth = EPSILON;
-	for (int i = 0; i < MAX_MARCHING_STEPS; ++i)
-	{
-		const SdfModel* hit_model = nullptr;
-		float dist = scene_sdf(orig + dir * depth, models, hit_model);
-
-		if (hit_model == nullptr)
-			break;
-
-		depth += dist;
-		if (dist < EPSILON)
-		{
-			hit = orig + dir * depth;
-			if (hit_model->try_get_normal(hit, N) == false)
-				std::cout << "normal bug!" << std::endl;
-			material = hit_model->get_material();
-			return true;
-		}
-
-		// for checkboard(temp comment)
-		if (depth >= MAX_DISTANCE)
-			break;
 	}
 
 	float checkerboard_dist = std::numeric_limits<float>::max();
-	if (fabs(dir.y()) > EPSILON) {
-		float d = -(orig.y() + 4) / dir.y(); // the checkerboard plane has equation y = -4
+	if (fabs(dir[1]) > 1e-3) {
+		float d = -(orig[1] + 4) / dir[1]; // the checkerboard plane has equation y = -4
 		Vector3f pt = orig + dir * d;
-		if (d > 0 && fabs(pt.x()) < 10 && pt.z() < -10 && pt.z() > -30) {
+		if (d > 0 && fabs(pt[0]) < 10 && pt[2]<-10 && pt[2]>-30 && d < spheres_dist) {
 			checkerboard_dist = d;
 			hit = pt;
 			N = Vector3f(0, 1, 0);
-			material.diffuse_color = (int(.5*hit.x() + 1000) + int(.5*hit.z())) & 1 ? Vector3f(.3, .3, .3) : Vector3f(.3, .2, .1);
+			material.diffuse_color = (int(.5f * hit[1] + 1000) + int(.5f * hit[2])) & 1 ? Vector3f(.3f, .3f, .3f) : Vector3f(.3f, .2f, .1f);
 		}
 	}
-
-	return std::min(MAX_DISTANCE, checkerboard_dist)<1000;
+	return std::min(spheres_dist, checkerboard_dist) < 1000;
 }
 
-Vector3f cast_ray(const Vector3f &orig, const Vector3f &dir, const std::vector<const SdfModel*> &models, const std::vector<Light> &lights, size_t depth=0) {
+Vector3f CastRay(const Vector3f &orig, const Vector3f &dir, const std::vector<const Model*> &models, const std::vector<Light> &lights, size_t depth = 0) {
     Vector3f point, N;
     Material material;
 
-    if (depth>4 || !ray_marching(orig, dir, models, point, N, material)) {
-        return Vector3f(0.2, 0.7, 0.8); // background color
+    if (depth>4 || !SceneIntersect(orig, dir, models, point, N, material)) {
+        return Vector3f(0.2f, 0.7f, 0.8f); // background color
 	}
 
 	Vector3f refract_color(0.f, 0.f, 0.f);
 	// compute fresnelt
 	float kr;
-	fresnel(dir, N, material.refractive_index, kr);
+	Fresnel(dir, N, material.refractive_index, kr);
 	// compute refraction if it is not a case of total internal reflection
 	if (kr < 1) {
-		Vector3f refract_dir = refract(dir, N, material.refractive_index).normalized();
+		Vector3f refract_dir = Refract(dir, N, material.refractive_index).normalized();
 		Vector3f refract_orig = refract_dir.dot(N) < 0.f ? (point - N * EPSILON).eval() : (point + N * EPSILON).eval();
-		refract_color = cast_ray(refract_orig, refract_dir, models, lights, depth + 1);
+		refract_color = CastRay(refract_orig, refract_dir, models, lights, depth + 1);
 	}
 
-	Vector3f reflect_dir = reflect(dir, N).normalized();
+	Vector3f reflect_dir = Reflect(dir, N).normalized();
 	Vector3f reflect_orig = reflect_dir.dot(N) < 0.f ? (point - N * EPSILON).eval() : (point + N * EPSILON).eval(); // offset the original point to avoid occlusion by the object itself
-	Vector3f reflect_color = cast_ray(reflect_orig, reflect_dir, models, lights, depth + 1);
+	Vector3f reflect_color = CastRay(reflect_orig, reflect_dir, models, lights, depth + 1);
 
     float diffuse_light_intensity = 0, specular_light_intensity = 0;
     for (size_t i=0; i<lights.size(); i++) {
@@ -265,29 +153,29 @@ Vector3f cast_ray(const Vector3f &orig, const Vector3f &dir, const std::vector<c
 		Vector3f shadow_orig = light_dir.dot(N) < 0.f ? (point - N * EPSILON).eval() : (point + N * EPSILON).eval(); // checking if the point lies in the shadow of the lights[i]
         Vector3f shadow_pt, shadow_N;
         Material tmpmaterial;
-        if (ray_marching(shadow_orig, light_dir, models, shadow_pt, shadow_N, tmpmaterial) && (shadow_pt-shadow_orig).norm() < light_distance)
+        if (SceneIntersect(shadow_orig, light_dir, models, shadow_pt, shadow_N, tmpmaterial) && (shadow_pt-shadow_orig).norm() < light_distance)
             continue;
 
         diffuse_light_intensity  += lights[i].intensity * std::max(0.f, light_dir.dot(N));
-        specular_light_intensity += powf(std::max(0.f, -reflect(-light_dir, N).dot(dir)), material.specular_exponent)*lights[i].intensity;
+        specular_light_intensity += powf(std::max(0.f, -Reflect(-light_dir, N).dot(dir)), material.specular_exponent)*lights[i].intensity;
     }
 
     return material.diffuse_color * diffuse_light_intensity * material.albedo[0] + Vector3f(1., 1., 1.)*specular_light_intensity * material.albedo[1] + reflect_color * material.albedo[2] * kr + refract_color * material.albedo[3] * (1 - kr);
 }
 
-void render(const std::vector<const SdfModel*> &models, const std::vector<Light> &lights) {
+void Render(const std::vector<const Model*> &models, const std::vector<Light> &lights) {
     const int   width    = 1024;
     const int   height   = 768;
     const float fov      = M_PI/3.;
-    std::vector<Vector3f> framebuffer(width*height);
+    std::vector<Vector3f> framebuffer(width * height);
 
-//#pragma omp parallel for
-	for (size_t j = 0; j < height; j++) { // actual rendering loop
-        for (size_t i = 0; i<width; i++) {
-            float dir_x =  (i + 0.5) -  width/2.;
-            float dir_y = -(j + 0.5) + height/2.;    // this flips the image at the same time
-            float dir_z = -height/(2.*tan(fov/2.));
-            framebuffer[i+j*width] = cast_ray(Vector3f(0.f, 0.f, 0.f), Vector3f(dir_x, dir_y, dir_z).normalized(), models, lights);
+#pragma omp parallel for
+	for (int j = 0; j < height; j++) { // actual rendering loop
+        for (int i = 0; i<width; i++) {
+            float dir_x =  (i + 0.5f) -  width/2.f;
+            float dir_y = -(j + 0.5f) + height/2.f;    // this flips the image at the same time
+            float dir_z = -height/(2.f*tan(fov/2.f));
+            framebuffer[i+j*width] = CastRay(Vector3f(0.f, 0.f, 0.f), Vector3f(dir_x, dir_y, dir_z).normalized(), models, lights);
         }
     }
 
@@ -306,26 +194,25 @@ void render(const std::vector<const SdfModel*> &models, const std::vector<Light>
 }
 
 int main() {
-	DeepRT::Get()->Initialize();
+	RaytracingEngine::Get()->Initialize();
 
-    Material      ivory(0.0, Vector4f(0.6,  0.3, 0.1, 0.0), Vector3f(0.4, 0.4, 0.3),   50.);
-    Material      glass(1.5, Vector4f(0.0,  0.5, 0.1, 0.8), Vector3f(0.6, 0.7, 0.8),  125.);
-    Material red_rubber(0.0, Vector4f(0.9,  0.1, 0.0, 0.0), Vector3f(0.3, 0.1, 0.1),   10.);
-    Material     mirror(0.0, Vector4f(0.0, 10.0, 0.8, 0.0), Vector3f(1.0, 1.0, 1.0), 1425.);
+    Material      ivory(0.0, Vector4f(0.6f,  0.3f, 0.1f, 0.0f), Vector3f(0.4f, 0.4f, 0.3f),   50.f);
+    Material      glass(1.5, Vector4f(0.0f,  0.5f, 0.1f, 0.8f), Vector3f(0.6f, 0.7f, 0.8f),  125.f);
+    Material red_rubber(0.0, Vector4f(0.9f,  0.1f, 0.0f, 0.0f), Vector3f(0.3f, 0.1f, 0.1f),   10.f);
+    Material     mirror(0.0, Vector4f(0.0f, 10.0f, 0.8f, 0.0f), Vector3f(1.0f, 1.0f, 1.0f), 1425.f);
 
-    std::vector<const SdfModel*> models;
-    models.push_back(new Sphere(Vector3f(-3,    0,   -16), 2,      ivory));
-	models.push_back(new Sphere(Vector3f(-1.0, -1.5, -12), 2,      glass));
-	models.push_back(new Sphere(Vector3f( 1.5, -0.5, -18), 3, red_rubber));
-	models.push_back(new Sphere(Vector3f(7, 5, -18), 4, mirror));
-	models.push_back(new StanfordBunny(Vector3f(0, 3, -10), red_rubber));
+    std::vector<const Model*> models;
+    models.push_back(new Sphere(Vector3f(-3.f,    0.f,   -16.f), 2.f,      ivory));
+	models.push_back(new Sphere(Vector3f(-1.0f, -1.5f, -12.f), 2.f,      glass));
+	models.push_back(new Sphere(Vector3f( 1.5f, -0.5f, -18.f), 3.f, red_rubber));
+	models.push_back(new Sphere(Vector3f(7.f, 5.f, -18.f), 4.f, mirror));
 
     std::vector<Light>  lights;
-    lights.push_back(Light(Vector3f(-20, 20,  20), 1.5));
-    lights.push_back(Light(Vector3f( 30, 50, -25), 1.8));
-	lights.push_back(Light(Vector3f(30, 20, 30), 1.7));
+    lights.push_back(Light(Vector3f(-20.f, 20.f,  20.f), 1.5f));
+    lights.push_back(Light(Vector3f( 30.f, 50.f, -25.f), 1.8f));
+	lights.push_back(Light(Vector3f(30.f, 20.f, 30.f), 1.7f));
 
-	render(models, lights);
+	Render(models, lights);
 
 	for (auto model : models)
 	{

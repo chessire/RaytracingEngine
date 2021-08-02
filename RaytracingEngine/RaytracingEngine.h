@@ -1,17 +1,17 @@
 #ifndef __DEEP_RT__
 #define __DEEP_RT__
 
-class DeepRT
+class RaytracingEngine
 {
 public:
-	static DeepRT* Get();
+	static RaytracingEngine* Get();
 
 	void Initialize();
 
 private:
-	DeepRT();
-	~DeepRT();
-	void operator=(const DeepRT& deeprt);
+	RaytracingEngine();
+	~RaytracingEngine();
+	void operator=(const RaytracingEngine& deeprt);
 };
 
 #endif // __DEEP_RT__

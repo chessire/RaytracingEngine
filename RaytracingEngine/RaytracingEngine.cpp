@@ -1,36 +1,30 @@
-#include "DeepRT.h"
+#include "RaytracingEngine.h"
+#include "GlobalConst.h"
 
-#include <Eigen/Core>
-#include "Rendering/Renderer.h"
-#include "Rendering/BVH/BVH.h"
-#include "Rendering/Scene/Scene.h"
+#include <Eigen/Dense>
 
 using namespace Eigen;
 
-DeepRT* DeepRT::Get()
+RaytracingEngine* RaytracingEngine::Get()
 {
-	static DeepRT deepRT;
+	static RaytracingEngine deepRT;
 	return &deepRT;
 }
 
-void DeepRT::Initialize()
+void RaytracingEngine::Initialize()
 {
 	Eigen::initParallel();
-
-	Renderer::Get()->Intialize();
-	BVH::Get()->Intialize();
-	Scene::Get()->Intialize();
 }
 
-DeepRT::DeepRT()
+RaytracingEngine::RaytracingEngine()
 {
 }
 
-DeepRT::~DeepRT()
+RaytracingEngine::~RaytracingEngine()
 {
 }
 
-void DeepRT::operator=(const DeepRT& deeprt)
+void RaytracingEngine::operator=(const RaytracingEngine& raytracingEngine)
 {
-	UNUSED(deeprt);
+	UNUSED(raytracingEngine);
 }
